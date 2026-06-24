@@ -127,8 +127,9 @@ def calcola_metriche_avanzate(df, metrica_scelta):
                 break
                 
         # Condizioni specifiche sui filtri di striscia richiesti
-        last_3 = val_list[-3:] if len(val_list) >= 3 else []
-        last_6 = val_list[-6:] if len(val_list) >= 6 else []
+        # Condizioni specifiche sui filtri di striscia richiesti
+        last3 = val_list[-3:] if len(val_list) >= 3 else []
+        last6 = val_list[-6:] if len(val_list) >= 6 else []
         
         is_last3_below = len(last3) == 3 and all(x < mean_val for x in last3)
         is_last6_below = len(last6) == 6 and all(x < mean_val for x in last6)
