@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
+from plotly.subplots import make_subplots
+import plotly.graph_objects as go
 from sqlalchemy import create_engine
 
 # ==========================================
@@ -46,6 +48,10 @@ if df_nba.empty:
 if 'Player' in df_nba.columns:
     df_nba = df_nba.rename(columns={'Player': 'PLAYER_NAME'})
 
+# Sincronizzazione colonne Minuti se presenti con nomi diversi
+if 'MIN' in df_nba.columns and 'MP' not in df_nba.columns:
+    df_nba['MP'] = df_nba['MIN']
+
 # ==========================================
 # 🎛️ BARRA LATERALE: PANNELLO DI CONTROLLO ALGORITMO
 # ==========================================
@@ -59,7 +65,7 @@ metrica = st.sidebar.radio(
     horizontal=True
 )
 
-# 2. FILTRO SQUADRE (Multiselect - Attivo di default su tutte come nel file HTML)
+# 2. FILTRO SQUADRE
 lista_squadre = sorted(df_nba['Team'].unique().tolist())
 squadre_selezionate = st.sidebar.multiselect(
     "🏀 Filtra per Squadra:",
@@ -78,7 +84,7 @@ st.sidebar.subheader("🎯 Filtri Predittivi")
 filtro_bounce = st.sidebar.checkbox("🚨 Ultime 3 sotto media (Bounce-Back)")
 filtro_streak_neg = st.sidebar.checkbox("💀 Ultime 6 sotto media (Streak Critica)")
 
-# 5. BARRA DI RICERCA GIOCATORI (Corretta)
+# 5. BARRA DI RICERCA GIOCATORI
 ricerca_giocatore = st.sidebar.text_input("🔍 Cerca Giocatore specifico:")
 
 # ==========================================
@@ -93,6 +99,18 @@ def calcola_metriche_avanzate(df, metrica_scelta, team_filter):
     if df_filtrato_team.empty:
         return pd.DataFrame()
     
+    # Funzione di supporto per pulire i minuti se salvati come stringhe "MM:SS"
+    def _pulisci_mp(x):
+        if pd.isna(x): return 0.0
+        s = str(x).strip()
+        if ':' in s:
+            try:
+                parti = s.split(':')
+                return float(parti[0]) + float(parti[1]) / 60.0
+            except: return 0.0
+        try: return float(s)
+        except: return 0.0
+
     for giocatore, group in df_filtrato_team.groupby('PLAYER_NAME'):
         group = group.sort_values('Date', ascending=True).reset_index(drop=True)
         
@@ -115,6 +133,15 @@ def calcola_metriche_avanzate(df, metrica_scelta, team_filter):
         if metrica_scelta == "RA"  and mean_val < 10: continue
         
         std_val = values.std() if len(values) > 1 else 0
+        
+        # Calcolo Media e Deviazione Standard dei Minuti Giocati (MP)
+        if 'MP' in group.columns:
+            mp_cleaned = group['MP'].apply(_pulisci_mp)
+        else:
+            mp_cleaned = pd.Series([0.0] * len(group))
+        
+        mean_mp = mp_cleaned.mean()
+        std_mp = mp_cleaned.std() if len(mp_cleaned) > 1 else 0.0
         
         fg = pd.to_numeric(group['FG%'], errors='coerce').fillna(0).mean()
         tp_pct = pd.to_numeric(group['3P%'], errors='coerce').fillna(0).mean()
@@ -144,6 +171,8 @@ def calcola_metriche_avanzate(df, metrica_scelta, team_filter):
             'Team': group['Team'].iloc[-1],
             'Media': mean_val,
             'DevStd': std_val,
+            'Media_Minuti': mean_mp,
+            'DevStd_Minuti': std_mp,
             'Streak': streak,
             'TipoStreak': "SOPRA" if ultimo_sopra else "SOTTO",
             'Last3Below': is_last3_below,
@@ -167,7 +196,6 @@ if not df_elaborato.empty:
     if filtro_streak_neg:
         df_elaborato = df_elaborato[df_elaborato['Last6Below'] == True]
         
-    # FIX BARRA DI RICERCA GIOCATORE (Aggiunto il secondo modificatore .str)
     if ricerca_giocatore:
         df_elaborato = df_elaborato[df_elaborato['Giocatore'].str.lower().str.contains(ricerca_giocatore.lower(), na=False)]
 
@@ -199,7 +227,8 @@ else:
 
         st.subheader(f"👤 {row['Giocatore']} ({row['Team']})")
         st.markdown(
-            f"**Media Stagione:** `{row['Media']:.1f}` | **Dev.Std:** `{row['DevStd']:.2f}` | "
+            f"**Media {metrica}:** `{row['Media']:.1f}` | **Dev.Std {metrica}:** `{row['DevStd']:.2f}` |\n"
+            f"**Media Minuti (MP):** `{row['Media_Minuti']:.1f}` | **Dev.Std Minuti:** `{row['DevStd_Minuti']:.2f}` |\n"
             f"**Striscia Corrente:** `{row['Streak']} partite` {badge_streak} la media"
             f" | **Efficienza Tiro:** `{row['Efficienza']:.2f}`{extra_info}"
         )
@@ -227,12 +256,25 @@ else:
         
         df_match['Colore'] = np.where(df_match['Grafico_Val'] >= row['Media'], 'Sopra Media', 'Sotto Media')
         
-        # Sanificazione e conversione in stringa pulita "Segnati/Tentati" per i Tooltip
+        # Pulizia minuti specifica per la visualizzazione grafica
+        def _pulisci_mp_grafico(x):
+            if pd.isna(x): return 0.0
+            s = str(x).strip()
+            if ':' in s:
+                try:
+                    p = s.split(':')
+                    return float(p[0]) + float(p[1]) / 60.0
+                except: return 0.0
+            try: return float(s)
+            except: return 0.0
+        
+        df_match['MP_Numerico'] = df_match['MP'].apply(_pulisci_mp_grafico) if 'MP' in df_match.columns else 0.0
+        
+        # Sanificazione e conversione per i Tooltip
         for c in ['FG', 'FGA', '3P', '3PA', 'FT', 'FTA']:
             if c in df_match.columns:
                 df_match[c] = pd.to_numeric(df_match[c], errors='coerce').fillna(0).astype(int)
         
-        # Calcolo matematico dei tiri da 2 punti per sottrazione (FG - 3P)
         if 'FG' in df_match.columns and '3P' in df_match.columns:
             df_match['🎯 Tiri da 2 (Segnati/Tentati)'] = (df_match['FG'] - df_match['3P']).astype(str) + " / " + (df_match['FGA'] - df_match['3PA']).astype(str)
         else:
@@ -248,35 +290,74 @@ else:
         else:
             df_match['🟨 Tiri Liberi (Segnati/Tentati)'] = "n/d"
             
-        # Formattazione data per asse X grafica
         df_match['Data'] = df_match['Date'].dt.strftime('%Y-%m-%d')
         
-        # Generazione Grafico Potenziato con Hover Data customizzato
-        fig = px.bar(
-            df_match,
-            x='Data',
-            y='Grafico_Val',
-            color='Colore',
-            color_discrete_map={'Sopra Media': '#3498db', 'Sotto Media': '#9b59b6'},
-            text_auto=True,
-            hover_data={
-                'Data': True,
-                'Grafico_Val': True,
-                'MP': True,
-                '🎯 Tiri da 2 (Segnati/Tentati)': True,
-                '🏀 Tiri da 3 (Segnati/Tentati)': True,
-                '🟨 Tiri Liberi (Segnati/Tentati)': True,
-                'Colore': False # Nascondiamo l'etichetta del colore interna
-            },
-            labels={
-                'Grafico_Val': f'Valore {metrica}',
-                'MP': '⏱️ Minuti Giocati'
-            },
-            title=f"Trend Prestazioni Recenti di {row['Giocatore']}"
+        # ==========================================
+        # 📈 COSTRUZIONE GRAFICO AVANZATO DOPPIO ASSE Y
+        # ==========================================
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        
+        # Asse Y Sinistro: Istogramma Metrica Selezionata
+        fig.add_trace(
+            go.Bar(
+                x=df_match['Data'],
+                y=df_match['Grafico_Val'],
+                name=f"Valore {metrica}",
+                marker_color=df_match['Colore'].map({'Sopra Media': '#3498db', 'Sotto Media': '#9b59b6'}).tolist(),
+                text=df_match['Grafico_Val'].round(1),
+                textposition='auto',
+                customdata=np.stack((
+                    df_match['MP'],
+                    df_match['🎯 Tiri da 2 (Segnati/Tentati)'],
+                    df_match['🏀 Tiri da 3 (Segnati/Tentati)'],
+                    df_match['🟨 Tiri Liberi (Segnati/Tentati)']
+                ), axis=-1),
+                hovertemplate=(
+                    "<b>Data:</b> %{x}<br>" +
+                    f"<b>{metrica}:</b> %{{y}}<br>" +
+                    "<b>⏱️ MP originali:</b> %{customdata[0]}<br>" +
+                    "<b>🎯 Tiri da 2:</b> %{customdata[1]}<br>" +
+                    "<b>🏀 Tiri da 3:</b> %{customdata[2]}<br>" +
+                    "<b>🟨 Tiri Liberi:</b> %{customdata[3]}<extra></extra>"
+                )
+            ),
+            secondary_y=False
         )
         
-        fig.add_hline(y=row['Media'], line_dash="dash", line_color="#2c3e50", annotation_text="Media Stagione")
-        fig.update_layout(height=320, margin=dict(l=20, r=20, t=40, b=20), showlegend=False)
+        # Asse Y Destro: Linea Minuti Giocati
+        fig.add_trace(
+            go.Scatter(
+                x=df_match['Data'],
+                y=df_match['MP_Numerico'],
+                name="Minuti Giocati",
+                mode="lines+markers",
+                line=dict(color="#e67e22", width=3),
+                marker=dict(size=8, symbol="circle"),
+                hovertemplate="<b>Data:</b> %{x}<br><b>⏱️ Minuti:</b> %{y:.1f} min<extra></extra>"
+            ),
+            secondary_y=True
+        )
+        
+        # Linea Orizzontale Media Stagionale Metrica Target
+        fig.add_hline(
+            y=row['Media'], 
+            line_dash="dash", 
+            line_color="#2c3e50", 
+            annotation_text=f"Media {metrica}",
+            secondary_y=False
+        )
+        
+        # Configurazione Layout Grafico
+        fig.update_layout(
+            title=f"Trend {metrica} & Minuti Giocati di {row['Giocatore']}",
+            height=360, 
+            margin=dict(l=20, r=20, t=40, b=20),
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
+        )
+        
+        fig.update_yaxes(title_text=f"Valore {metrica}", secondary_y=False)
+        fig.update_yaxes(title_text="⏱️ Minuti Giocati (Scala Destra)", secondary_y=True)
         
         st.plotly_chart(fig, use_container_width=True)
         st.divider()
