@@ -99,7 +99,7 @@ def calcola_metriche_avanzate(df, metrica_scelta, team_filter):
     if df_filtrato_team.empty:
         return pd.DataFrame()
     
-    # Funzione di supporto per pulire i minuti se salvati come stringhe "MM:SS"
+    # Funzione di supporto per pulire i minuti se salvati como stringhe "MM:SS"
     def _pulisci_mp(x):
         if pd.isna(x): return 0.0
         s = str(x).strip()
@@ -122,7 +122,8 @@ def calcola_metriche_avanzate(df, metrica_scelta, team_filter):
         
         mean_val = values.mean()
         
-        # Sbarramenti minimi dell'algoritmo originario
+        # Sbarramenti minimi dell'algoritmo originario 
+        # (Nota: Il blocco a 8 permette di mostrare correttamente tutti i giocatori con media > 10)
         if metrica_scelta == "PTS" and mean_val < 8: continue
         if metrica_scelta == "TRB" and mean_val < 5: continue
         if metrica_scelta == "AST" and mean_val < 5: continue
@@ -207,6 +208,15 @@ if not df_elaborato.empty:
         df_elaborato = df_elaborato.sort_values('Streak', ascending=False)
 
 # ==========================================
+# ⚙️ GESTIONE PAGINAZIONE DINAMICA (SESSION STATE)
+# ==========================================
+if "limite_giocatori" not in st.session_state:
+    st.session_state.limite_giocatori = 20
+
+# Se i filtri cambiano o l'utente fa una ricerca, possiamo visualizzare il set corretto
+totale_giocatori_disponibili = len(df_elaborato)
+
+# ==========================================
 # 🖥️ COSTRUZIONE GRAFICA
 # ==========================================
 st.title("📊 NBA Player Analytics & Historical Bounce-Back")
@@ -215,7 +225,10 @@ st.markdown(f"Configurazione Attuale: Analisi predittiva focalizzata su **{metri
 if df_elaborato.empty:
     st.warning("⚠️ Nessun giocatore soddisfa i criteri, i filtri di striscia o i filtri squadra impostati.")
 else:
-    top_giocatori = df_elaborato.head(10)
+    # Mostriamo i dati fino al limite corrente dello stato della sessione
+    top_giocatori = df_elaborato.head(st.session_state.limite_giocatori)
+    
+    st.info(f"Visualizzati {len(top_giocatori)} giocatori su un totale di {totale_giocatori_disponibili} trovati.")
     
     for _, row in top_giocatori.iterrows():
         badge_streak = "🔴 SOTTO" if row['TipoStreak'] == "SOTTO" else "🟢 SOPRA"
@@ -361,3 +374,14 @@ else:
         
         st.plotly_chart(fig, use_container_width=True)
         st.divider()
+
+    # ==========================================
+    # 🔄 PULSANTE DINAMICO "MOSTRA ALTRI"
+    # ==========================================
+    if totale_giocatori_disponibili > st.session_state.limite_giocatori:
+        st.markdown("<br>", unsafe_transform=True)
+        col_button, _ = st.columns([1, 3])
+        with col_button:
+            if st.button("➡ Mostra Altri 20 Giocatori", use_container_width=True):
+                st.session_state.limite_giocatori += 20
+                st.rerun()
