@@ -379,7 +379,7 @@ else:
     # 🔄 PULSANTE DINAMICO "MOSTRA ALTRI"
     # ==========================================
     if totale_giocatori_disponibili > st.session_state.limite_giocatori:
-        st.markdown("<br>", unsafe_transform=True)
+        st.write("")
         col_button, _ = st.columns([1, 3])
         with col_button:
             if st.button("➡ Mostra Altri 20 Giocatori", use_container_width=True):
