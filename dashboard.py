@@ -5,6 +5,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import plotly.graph_objects as go
 from sqlalchemy import create_engine
+import datetime
 
 # ==========================================
 # ⚙️ CONFIGURAZIONE PAGINA
@@ -25,7 +26,7 @@ def carica_boxscores():
             df['Date'] = pd.to_datetime(df['Date'])
         return df
     except Exception as e:
-        st.error(f"Errore connessione Database: {e}")
+        st.error(f"Errore connessione Database (Boxscores): {e}")
         return pd.DataFrame()
 
 @st.cache_data
@@ -36,9 +37,33 @@ def carica_storico_regressione():
     except:
         return pd.DataFrame()
 
+@st.cache_data(ttl=600)
+def carica_infortuni():
+    try:
+        engine = create_engine(DB_URL)
+        with engine.connect() as connection:
+            df = pd.read_sql("SELECT * FROM infortuni", connection)
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
+@st.cache_data(ttl=600)
+def carica_calendario():
+    try:
+        engine = create_engine(DB_URL)
+        with engine.connect() as connection:
+            df = pd.read_sql("SELECT * FROM schedule", connection)
+            if not df.empty and 'Date' in df.columns:
+                df['Date'] = pd.to_datetime(df['Date'])
+        return df
+    except Exception as e:
+        return pd.DataFrame()
+
 # Esecuzione caricamento
 df_nba = carica_boxscores()
 df_storico = carica_storico_regressione()
+df_infortuni = carica_infortuni()
+df_schedule = carica_calendario()
 
 if df_nba.empty:
     st.error("❌ Impossibile procedere senza dati. Verifica il database.")
@@ -53,7 +78,7 @@ if 'MIN' in df_nba.columns and 'MP' not in df_nba.columns:
     df_nba['MP'] = df_nba['MIN']
 
 # ==========================================
-# 🎛️ BARRA LATERALE: PANNELLO DI CONTROLLO ALGORITMO
+# 🎛️ BARRA LATERALE: PANNELLO DI CONTROLLO
 # ==========================================
 st.sidebar.title("🎮 Algoritmo NBA")
 
@@ -65,27 +90,85 @@ metrica = st.sidebar.radio(
     horizontal=True
 )
 
-# 2. FILTRO SQUADRE
+st.sidebar.markdown("---")
+
+# 2. FILTRO CALENDARIO (NOVITÀ)
+st.sidebar.subheader("📅 Filtro Calendario")
+filtro_domani = st.sidebar.checkbox("Mostra solo le squadre che giocano DOMANI")
+
 lista_squadre = sorted(df_nba['Team'].unique().tolist())
+
+# Logica per estrarre le squadre di domani
+if filtro_domani and not df_schedule.empty:
+    # Calcola la data di domani
+    domani = pd.Timestamp.today().normalize() + pd.Timedelta(days=1)
+    sched_domani = df_schedule[df_schedule['Date'].dt.date == domani.date()]
+    
+    if not sched_domani.empty:
+        # Presupponendo che la tabella schedule abbia le colonne 'Home' e 'Away' (o equivalenti)
+        col_casa = 'Home' if 'Home' in sched_domani.columns else 'HomeTeam'
+        col_trasferta = 'Away' if 'Away' in sched_domani.columns else 'AwayTeam'
+        
+        try:
+            squadre_domani = set(sched_domani[col_casa].tolist() + sched_domani[col_trasferta].tolist())
+            lista_squadre = [s for s in lista_squadre if s in squadre_domani]
+        except KeyError:
+            st.sidebar.warning("Nomi colonne schedule non riconosciuti (Home/Away).")
+    else:
+        st.sidebar.warning("Nessuna partita in programma per domani.")
+        lista_squadre = [] # Svuota la lista se non ci sono partite
+
+# 3. FILTRO SQUADRE
 squadre_selezionate = st.sidebar.multiselect(
     "🏀 Filtra per Squadra:",
     options=lista_squadre,
     default=lista_squadre
 )
 
-# 3. Selezione Ordinamento
+# 4. WIDGET INFORTUNI (NOVITÀ)
+st.sidebar.markdown("---")
+st.sidebar.subheader("🚑 Report Infortuni")
+
+if not df_infortuni.empty:
+    col_team = 'Team' if 'Team' in df_infortuni.columns else 'squadra'
+    if col_team in df_infortuni.columns:
+        df_inf_filtrati = df_infortuni[df_infortuni[col_team].isin(squadre_selezionate)]
+    else:
+        df_inf_filtrati = df_infortuni
+
+    if df_inf_filtrati.empty:
+        st.sidebar.success("✅ Nessun infortunio per le squadre selezionate.")
+    else:
+        with st.sidebar.expander("Vedi dettagli infortunati", expanded=True):
+            for _, row in df_inf_filtrati.iterrows():
+                # Adatta 'Giocatore', 'Status' e 'Dettagli' ai nomi reali del tuo DB
+                nome = row.get('Giocatore', row.get('Player', 'Sconosciuto'))
+                status = str(row.get('Status', row.get('stato', ''))).upper()
+                dettagli = row.get('Dettagli', row.get('descrizione', ''))
+                
+                icona = "🔴" if status in ["OUT", "FUORI"] else "🟡" if status in ["QUESTIONABLE", "IN DUBBIO", "DAY-TO-DAY"] else "⚪"
+                st.markdown(f"{icona} **{nome}**")
+                if dettagli: st.caption(f"Stato: {status} | Info: {dettagli}")
+                else: st.caption(f"Stato: {status}")
+else:
+    st.sidebar.info("Tabella infortuni vuota o non trovata.")
+
+st.sidebar.markdown("---")
+
+# 5. Selezione Ordinamento
 ordine = st.sidebar.selectbox(
     "Ordina i giocatori per:",
     ["Media Decrescente", "Deviazione Standard (Volatilità)", "Streak Attuale"]
 )
 
-# 4. Filtri Avanzati di Condizione (Streak)
+# 6. Filtri Avanzati di Condizione (Streak)
 st.sidebar.subheader("🎯 Filtri Predittivi")
 filtro_bounce = st.sidebar.checkbox("🚨 Ultime 3 sotto media (Bounce-Back)")
 filtro_streak_neg = st.sidebar.checkbox("💀 Ultime 6 sotto media (Streak Critica)")
 
-# 5. BARRA DI RICERCA GIOCATORI
+# 7. BARRA DI RICERCA GIOCATORI
 ricerca_giocatore = st.sidebar.text_input("🔍 Cerca Giocatore specifico:")
+
 
 # ==========================================
 # 🧮 MOTORE MATEMATICO (COMPUTE STATS)
@@ -93,13 +176,10 @@ ricerca_giocatore = st.sidebar.text_input("🔍 Cerca Giocatore specifico:")
 def calcola_metriche_avanzate(df, metrica_scelta, team_filter):
     giocatori_processati = []
     
-    # Applichiamo subito il filtro sulle squadre selezionate
     df_filtrato_team = df[df['Team'].isin(team_filter)]
-    
     if df_filtrato_team.empty:
         return pd.DataFrame()
     
-    # Funzione di supporto per pulire i minuti se salvati como stringhe "MM:SS"
     def _pulisci_mp(x):
         if pd.isna(x): return 0.0
         s = str(x).strip()
@@ -122,8 +202,7 @@ def calcola_metriche_avanzate(df, metrica_scelta, team_filter):
         
         mean_val = values.mean()
         
-        # Sbarramenti minimi dell'algoritmo originario 
-        # (Nota: Il blocco a 8 permette di mostrare correttamente tutti i giocatori con media > 10)
+        # Sbarramenti minimi
         if metrica_scelta == "PTS" and mean_val < 8: continue
         if metrica_scelta == "TRB" and mean_val < 5: continue
         if metrica_scelta == "AST" and mean_val < 5: continue
@@ -135,7 +214,6 @@ def calcola_metriche_avanzate(df, metrica_scelta, team_filter):
         
         std_val = values.std() if len(values) > 1 else 0
         
-        # Calcolo Media e Deviazione Standard dei Minuti Giocati (MP)
         if 'MP' in group.columns:
             mp_cleaned = group['MP'].apply(_pulisci_mp)
         else:
@@ -208,13 +286,12 @@ if not df_elaborato.empty:
         df_elaborato = df_elaborato.sort_values('Streak', ascending=False)
 
 # ==========================================
-# ⚙️ GESTIONE PAGINAZIONE DINAMICA (SESSION STATE)
+# ⚙️ GESTIONE PAGINAZIONE DINAMICA
 # ==========================================
 if "limite_giocatori" not in st.session_state:
     st.session_state.limite_giocatori = 20
 
-# Se i filtri cambiano o l'utente fa una ricerca, possiamo visualizzare il set corretto
-totale_giocatori_disponibili = len(df_elaborato)
+totale_giocatori_disponibili = len(df_elaborato) if not df_elaborato.empty else 0
 
 # ==========================================
 # 🖥️ COSTRUZIONE GRAFICA
@@ -225,10 +302,11 @@ st.markdown(f"Configurazione Attuale: Analisi predittiva focalizzata su **{metri
 if df_elaborato.empty:
     st.warning("⚠️ Nessun giocatore soddisfa i criteri, i filtri di striscia o i filtri squadra impostati.")
 else:
-    # Mostriamo i dati fino al limite corrente dello stato della sessione
     top_giocatori = df_elaborato.head(st.session_state.limite_giocatori)
-    
     st.info(f"Visualizzati {len(top_giocatori)} giocatori su un totale di {totale_giocatori_disponibili} trovati.")
+    
+    # Pre-calcolo partite totali per ogni squadra
+    team_games_count = df_nba.groupby('Team')['Date'].nunique().to_dict()
     
     for _, row in top_giocatori.iterrows():
         badge_streak = "🔴 SOTTO" if row['TipoStreak'] == "SOTTO" else "🟢 SOPRA"
@@ -238,7 +316,11 @@ else:
             media_attentati = pd.to_numeric(row['DatiCompleti']['3PA'], errors='coerce').mean()
             extra_info = f" | Media Tentati: {media_attentati:.1f}"
 
-        st.subheader(f"👤 {row['Giocatore']} ({row['Team']})")
+        # CALCOLO PARTITE GIOCATE (NOVITÀ)
+        partite_giocate = len(row['DatiCompleti'])
+        partite_totali_squadra = team_games_count.get(row['Team'], partite_giocate)
+
+        st.subheader(f"👤 {row['Giocatore']} ({row['Team']}) — 🏟️ Partite: {partite_giocate}/{partite_totali_squadra}")
         st.markdown(
             f"**Media {metrica}:** `{row['Media']:.1f}` | **Dev.Std {metrica}:** `{row['DevStd']:.2f}` |\n"
             f"**Media Minuti (MP):** `{row['Media_Minuti']:.1f}` | **Dev.Std Minuti:** `{row['DevStd_Minuti']:.2f}` |\n"
@@ -258,7 +340,7 @@ else:
                 else:
                     st.info(f"📋 *Riferimento Storico 2020-25:* Tempo medio stimato di reazione: {recupero} match.")
 
-        # --- PREPARAZIONE DATI GRAFICO E PULIZIA COLONNE TOOLTIP ---
+        # --- PREPARAZIONE DATI GRAFICO ---
         df_match = row['DatiCompleti'].copy()
         
         if metrica == "PRA": df_match['Grafico_Val'] = df_match['PTS'] + df_match['TRB'] + df_match['AST']
@@ -269,7 +351,6 @@ else:
         
         df_match['Colore'] = np.where(df_match['Grafico_Val'] >= row['Media'], 'Sopra Media', 'Sotto Media')
         
-        # Pulizia minuti specifica per la visualizzazione grafica
         def _pulisci_mp_grafico(x):
             if pd.isna(x): return 0.0
             s = str(x).strip()
@@ -283,34 +364,29 @@ else:
         
         df_match['MP_Numerico'] = df_match['MP'].apply(_pulisci_mp_grafico) if 'MP' in df_match.columns else 0.0
         
-        # Sanificazione e conversione per i Tooltip
         for c in ['FG', 'FGA', '3P', '3PA', 'FT', 'FTA']:
             if c in df_match.columns:
                 df_match[c] = pd.to_numeric(df_match[c], errors='coerce').fillna(0).astype(int)
         
         if 'FG' in df_match.columns and '3P' in df_match.columns:
-            df_match['🎯 Tiri da 2 (Segnati/Tentati)'] = (df_match['FG'] - df_match['3P']).astype(str) + " / " + (df_match['FGA'] - df_match['3PA']).astype(str)
-        else:
-            df_match['🎯 Tiri da 2 (Segnati/Tentati)'] = "n/d"
+            df_match['🎯 Tiri da 2'] = (df_match['FG'] - df_match['3P']).astype(str) + " / " + (df_match['FGA'] - df_match['3PA']).astype(str)
+        else: df_match['🎯 Tiri da 2'] = "n/d"
             
         if '3P' in df_match.columns and '3PA' in df_match.columns:
-            df_match['🏀 Tiri da 3 (Segnati/Tentati)'] = df_match['3P'].astype(str) + " / " + df_match['3PA'].astype(str)
-        else:
-            df_match['🏀 Tiri da 3 (Segnati/Tentati)'] = "n/d"
+            df_match['🏀 Tiri da 3'] = df_match['3P'].astype(str) + " / " + df_match['3PA'].astype(str)
+        else: df_match['🏀 Tiri da 3'] = "n/d"
             
         if 'FT' in df_match.columns and 'FTA' in df_match.columns:
-            df_match['🟨 Tiri Liberi (Segnati/Tentati)'] = df_match['FT'].astype(str) + " / " + df_match['FTA'].astype(str)
-        else:
-            df_match['🟨 Tiri Liberi (Segnati/Tentati)'] = "n/d"
+            df_match['🟨 Tiri Liberi'] = df_match['FT'].astype(str) + " / " + df_match['FTA'].astype(str)
+        else: df_match['🟨 Tiri Liberi'] = "n/d"
             
         df_match['Data'] = df_match['Date'].dt.strftime('%Y-%m-%d')
         
         # ==========================================
-        # 📈 COSTRUZIONE GRAFICO AVANZATO DOPPIO ASSE Y
+        # 📈 GRAFICO AVANZATO
         # ==========================================
         fig = make_subplots(specs=[[{"secondary_y": True}]])
         
-        # Asse Y Sinistro: Istogramma Metrica Selezionata
         fig.add_trace(
             go.Bar(
                 x=df_match['Data'],
@@ -320,10 +396,7 @@ else:
                 text=df_match['Grafico_Val'].round(1),
                 textposition='auto',
                 customdata=np.stack((
-                    df_match['MP'],
-                    df_match['🎯 Tiri da 2 (Segnati/Tentati)'],
-                    df_match['🏀 Tiri da 3 (Segnati/Tentati)'],
-                    df_match['🟨 Tiri Liberi (Segnati/Tentati)']
+                    df_match['MP'], df_match['🎯 Tiri da 2'], df_match['🏀 Tiri da 3'], df_match['🟨 Tiri Liberi']
                 ), axis=-1),
                 hovertemplate=(
                     "<b>Data:</b> %{x}<br>" +
@@ -337,7 +410,6 @@ else:
             secondary_y=False
         )
         
-        # Asse Y Destro: Linea Minuti Giocati
         fig.add_trace(
             go.Scatter(
                 x=df_match['Data'],
@@ -351,7 +423,6 @@ else:
             secondary_y=True
         )
         
-        # Linea Orizzontale Media Stagionale Metrica Target
         fig.add_hline(
             y=row['Media'], 
             line_dash="dash", 
@@ -360,7 +431,6 @@ else:
             secondary_y=False
         )
         
-        # Configurazione Layout Grafico
         fig.update_layout(
             title=f"Trend {metrica} & Minuti Giocati di {row['Giocatore']}",
             height=360, 
@@ -368,6 +438,9 @@ else:
             showlegend=True,
             legend=dict(orientation="h", yanchor="bottom", y=1.05, xanchor="right", x=1)
         )
+        
+        # FIX ASSE X (NOVITÀ): Trasforma le date in categorie per eliminare i buchi temporali
+        fig.update_xaxes(type='category')
         
         fig.update_yaxes(title_text=f"Valore {metrica}", secondary_y=False)
         fig.update_yaxes(title_text="⏱️ Minuti Giocati (Scala Destra)", secondary_y=True)
