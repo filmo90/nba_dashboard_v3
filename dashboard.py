@@ -138,16 +138,30 @@ st.sidebar.subheader("🚑 Report Infortuni")
 
 if err_infortuni:
     st.sidebar.error(f"⚠️ Errore caricamento database:\n`{err_infortuni}`")
-    st.sidebar.info("Controlla che esista la tabella 'infortuni' nel DB e che le credenziali siano corrette.")
 elif not df_infortuni.empty:
     col_team = 'Team' if 'Team' in df_infortuni.columns else ('squadra' if 'squadra' in df_infortuni.columns else None)
+    
     if col_team:
-        df_inf_filtrati = df_infortuni[df_infortuni[col_team].isin(squadre_selezionate)]
+        # 🧹 PULIZIA: Rimuove spazi invisibili e rende tutto maiuscolo per evitare mismatch
+        df_infortuni[col_team] = df_infortuni[col_team].astype(str).str.strip().str.upper()
+        squadre_pulite = [str(s).strip().upper() for s in squadre_selezionate]
+        
+        # Filtriamo gli infortuni
+        df_inf_filtrati = df_infortuni[df_infortuni[col_team].isin(squadre_pulite)]
     else:
         df_inf_filtrati = df_infortuni
 
     if df_inf_filtrati.empty:
         st.sidebar.success("✅ Nessun infortunio per le squadre selezionate.")
+        
+        # 🐞 DEBUG VISIVO: Mostra cosa sta cercando di incrociare Streamlit
+        with st.sidebar.expander("🛠️ Debug Nomi Squadre (Perché non vedo giocatori?)"):
+            st.warning("Se sai che ci sono infortunati, i nomi qui sotto non combaciano:")
+            st.write("**Le tue squadre selezionate:**", squadre_pulite[:5])
+            if col_team:
+                st.write("**Le squadre scritte nel DB Infortuni:**", df_infortuni[col_team].unique().tolist()[:5])
+            st.info("Assicurati che i nomi coincidano (es. LAL vs Los Angeles Lakers)")
+            
     else:
         with st.sidebar.expander("Vedi dettagli infortunati", expanded=True):
             for _, row in df_inf_filtrati.iterrows():
@@ -163,9 +177,6 @@ elif not df_infortuni.empty:
                     st.caption(f"Stato: {status}")
 else:
     st.sidebar.info("Tabella infortuni vuota o non configurata.")
-
-st.sidebar.markdown("---")
-
 # 5. Selezione Ordinamento
 ordine = st.sidebar.selectbox(
     "Ordina i giocatori per:",
