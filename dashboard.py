@@ -139,51 +139,96 @@ squadre_selezionate = st.sidebar.multiselect(
     default=lista_squadre
 )
 
-# 4. WIDGET INFORTUNI AVANZATO
+# ==========================================
+# 🚑 4. WIDGET INFORTUNI AVANZATO (CORRETTO DEFINITIVO)
+# ==========================================
 st.sidebar.markdown("---")
 st.sidebar.subheader("🚑 Report Infortuni")
 
 if err_infortuni:
     st.sidebar.error(f"⚠️ Errore caricamento database:\n`{err_infortuni}`")
 elif not df_infortuni.empty:
-    col_team = 'Team' if 'Team' in df_infortuni.columns else ('squadra' if 'squadra' in df_infortuni.columns else None)
     
-    if col_team:
-        # 🧹 PULIZIA: Rimuove spazi invisibili e rende tutto maiuscolo per evitare mismatch
-        df_infortuni[col_team] = df_infortuni[col_team].astype(str).str.strip().str.upper()
+    # 1️⃣ NEUTRALIZZA IL CASE-SENSITIVE DI SUPABASE
+    # Trasformiamo tutte le colonne in minuscolo così siamo certi al 100% di pescarle
+    df_infortuni.columns = [str(c).lower().strip() for c in df_infortuni.columns]
+    
+    # Le tue colonne esatte (ora minuscole)
+    col_player = 'giocatore'
+    col_team = 'team'
+    col_status = 'status'
+    col_desc = 'dettagli'
+    
+    if col_team in df_infortuni.columns:
+        # 2️⃣ TRADUTTORE: Da Nome Esteso (Supabase) a Sigla (Dashboard)
+        TEAM_MAPPING = {
+            "ATLANTA HAWKS": "ATL", "ATLANTA": "ATL", "BOSTON CELTICS": "BOS", "BOSTON": "BOS",
+            "BROOKLYN NETS": "BKN", "BROOKLYN": "BKN", "CHARLOTTE HORNETS": "CHA", "CHARLOTTE": "CHA",
+            "CHICAGO BULLS": "CHI", "CHICAGO": "CHI", "CLEVELAND CAVALIERS": "CLE", "CLEVELAND": "CLE",
+            "DALLAS MAVERICKS": "DAL", "DALLAS": "DAL", "DENVER NUGGETS": "DEN", "DENVER": "DEN",
+            "DETROIT PISTONS": "DET", "DETROIT": "DET", "GOLDEN STATE WARRIORS": "GSW", "GOLDEN STATE": "GSW", "GS": "GSW",
+            "HOUSTON ROCKETS": "HOU", "HOUSTON": "HOU", "INDIANA PACERS": "IND", "INDIANA": "IND",
+            "LA CLIPPERS": "LAC", "LOS ANGELES CLIPPERS": "LAC", "CLIPPERS": "LAC",
+            "LOS ANGELES LAKERS": "LAL", "LA LAKERS": "LAL", "LAKERS": "LAL",
+            "MEMPHIS GRIZZLIES": "MEM", "MEMPHIS": "MEM", "MIAMI HEAT": "MIA", "MIAMI": "MIA",
+            "MILWAUKEE BUCKS": "MIL", "MILWAUKEE": "MIL", "MINNESOTA TIMBERWOLVES": "MIN", "MINNESOTA": "MIN",
+            "NEW ORLEANS PELICANS": "NOP", "NEW ORLEANS": "NOP", "NO": "NOP",
+            "NEW YORK KNICKS": "NYK", "NEW YORK": "NYK", "NY": "NYK",
+            "OKLAHOMA CITY THUNDER": "OKC", "OKLAHOMA CITY": "OKC", "ORLANDO MAGIC": "ORL", "ORLANDO": "ORL",
+            "PHILADELPHIA 76ERS": "PHI", "PHILADELPHIA": "PHI", "76ERS": "PHI",
+            "PHOENIX SUNS": "PHX", "PHOENIX": "PHX", "PORTLAND TRAIL BLAZERS": "POR", "PORTLAND": "POR", "BLAZERS": "POR",
+            "SACRAMENTO KINGS": "SAC", "SACRAMENTO": "SAC", "SAN ANTONIO SPURS": "SAS", "SAN ANTONIO": "SAS", "SA": "SAS",
+            "TORONTO RAPTORS": "TOR", "TORONTO": "TOR", "UTAH JAZZ": "UTA", "UTAH": "UTA",
+            "WASHINGTON WIZARDS": "WAS", "WASHINGTON": "WAS"
+        }
+
+        def estrai_sigla(nome_esteso):
+            if pd.isna(nome_esteso): return "SCONOSCIUTA"
+            n = str(nome_esteso).strip().upper()
+            # Cerca una corrispondenza esatta, altrimenti cerca la parola chiave
+            return TEAM_MAPPING.get(n, next((v for k, v in TEAM_MAPPING.items() if k in n), n))
+        
+        # Crea una nuova colonna con la sigla a 3 lettere (es. "LAL")
+        df_infortuni['team_sigla'] = df_infortuni[col_team].apply(estrai_sigla)
+        
+        # Prende le squadre che hai filtrato in alto (che sono già sigle)
         squadre_pulite = [str(s).strip().upper() for s in squadre_selezionate]
         
-        # Filtriamo gli infortuni
-        df_inf_filtrati = df_infortuni[df_infortuni[col_team].isin(squadre_pulite)]
+        # Filtro finale: incrocia le sigle
+        df_inf_filtrati = df_infortuni[df_infortuni['team_sigla'].isin(squadre_pulite)]
     else:
-        df_inf_filtrati = df_infortuni
+        df_inf_filtrati = pd.DataFrame() # Sicurezza nel caso manchi la colonna
 
     if df_inf_filtrati.empty:
         st.sidebar.success("✅ Nessun infortunio per le squadre selezionate.")
-        # 🐞 DEBUG VISIVO
+        
+        # 🛠️ Sistema di sicurezza: se sai che ci sono infortuni ma vedi questo,
+        # apri l'expander "Debug" per capire se qualche nome sfugge al dizionario!
         with st.sidebar.expander("🛠️ Debug Nomi Squadre"):
-            st.warning("Se sai che ci sono infortunati, i nomi qui sotto non combaciano:")
-            st.write("**Tue squadre:**", squadre_pulite[:5])
-            if col_team:
-                st.write("**DB Infortuni:**", df_infortuni[col_team].unique().tolist()[:5])
+            st.write("**Tue squadre selezionate:**", squadre_pulite)
+            if col_team in df_infortuni.columns:
+                st.write("**Come il codice legge il tuo DB (Originale ➡️ Sigla):**")
+                st.dataframe(df_infortuni[[col_team, 'team_sigla']].drop_duplicates().head(10))
     else:
         with st.sidebar.expander("Vedi dettagli infortunati", expanded=True):
             for _, row in df_inf_filtrati.iterrows():
-                nome = row.get('Giocatore', row.get('Player', row.get('player_name', 'Sconosciuto')))
-                status = str(row.get('Status', row.get('stato', ''))).upper()
-                dettagli = row.get('Dettagli', row.get('descrizione', ''))
+                # Estrazione dati dalle tue colonne precise
+                nome = str(row.get(col_player, 'Sconosciuto')).title()
+                status = str(row.get(col_status, '')).upper()
+                dettagli = str(row.get(col_desc, ''))
                 
-                icona = "🔴" if status in ["OUT", "FUORI"] else "🟡" if status in ["QUESTIONABLE", "IN DUBBIO", "DAY-TO-DAY"] else "⚪"
+                # Assegna l'icona in base allo status
+                icona = "🔴" if status in ["OUT", "FUORI"] else "🟡" if status in ["QUESTIONABLE", "IN DUBBIO", "DAY-TO-DAY", "PROBABLE"] else "⚪"
+                
                 st.markdown(f"{icona} **{nome}**")
-                if dettagli: 
+                
+                # Mostra i dettagli solo se esistono realmente nel DB
+                if dettagli and dettagli.lower() not in ["nan", "none", "", "null"]: 
                     st.caption(f"Stato: {status} | Info: {dettagli}")
                 else: 
                     st.caption(f"Stato: {status}")
 else:
     st.sidebar.info("Tabella infortuni vuota.")
-
-st.sidebar.markdown("---")
-
 # 5. Ordinamento e Filtri
 ordine = st.sidebar.selectbox(
     "Ordina i giocatori per:",
