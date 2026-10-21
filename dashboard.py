@@ -102,32 +102,40 @@ metrica = st.sidebar.radio(
 
 st.sidebar.markdown("---")
 
-# 2. FILTRO CALENDARIO DI DOMANI
+# 2. FILTRO CALENDARIO
 st.sidebar.subheader("📅 Filtro Calendario")
-filtro_domani = st.sidebar.checkbox("Mostra solo le squadre che giocano DOMANI")
+
+filtro_giorno = st.sidebar.radio(
+    "Mostra le squadre che giocano:",
+    options=["Tutte", "OGGI", "DOMANI"]
+)
 
 lista_squadre = sorted(df_nba['Team'].unique().tolist())
 
-# Logica squadre di domani
-if filtro_domani:
+# Logica squadre di oggi/domani
+if filtro_giorno != "Tutte":
     if err_schedule:
         st.sidebar.error(f"❌ Errore caricamento calendario: {err_schedule}")
     elif not df_schedule.empty:
-        domani = pd.Timestamp.today().normalize() + pd.Timedelta(days=1)
-        sched_domani = df_schedule[df_schedule['Date'].dt.date == domani.date()]
+        # Calcoliamo le date
+        oggi = pd.Timestamp.today().normalize()
+        data_target = oggi if filtro_giorno == "OGGI" else oggi + pd.Timedelta(days=1)
         
-        if not sched_domani.empty:
-            col_casa = 'Home' if 'Home' in sched_domani.columns else ('HomeTeam' if 'HomeTeam' in sched_domani.columns else None)
-            col_trasferta = 'Away' if 'Away' in sched_domani.columns else ('AwayTeam' if 'AwayTeam' in sched_domani.columns else None)
+        # Filtriamo il calendario in base alla data scelta
+        sched_giorno = df_schedule[df_schedule['Date'].dt.date == data_target.date()]
+        
+        if not sched_giorno.empty:
+            col_casa = 'Home' if 'Home' in sched_giorno.columns else ('HomeTeam' if 'HomeTeam' in sched_giorno.columns else None)
+            col_trasferta = 'Away' if 'Away' in sched_giorno.columns else ('AwayTeam' if 'AwayTeam' in sched_giorno.columns else None)
             
             if col_casa and col_trasferta:
                 try:
-                    squadre_domani = set(sched_domani[col_casa].tolist() + sched_domani[col_trasferta].tolist())
-                    lista_squadre = [s for s in lista_squadre if s in squadre_domani]
+                    squadre_giorno = set(sched_giorno[col_casa].tolist() + sched_giorno[col_trasferta].tolist())
+                    lista_squadre = [s for s in lista_squadre if s in squadre_giorno]
                 except Exception as e:
                     st.sidebar.warning(f"Errore nel parsing delle squadre: {e}")
         else:
-            st.sidebar.warning("Nessuna partita in programma per domani.")
+            st.sidebar.warning(f"Nessuna partita in programma per {filtro_giorno.lower()}.")
             lista_squadre = []
     else:
         lista_squadre = []
