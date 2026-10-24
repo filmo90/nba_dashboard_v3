@@ -237,6 +237,12 @@ elif not df_infortuni.empty:
                     st.caption(f"Stato: {status}")
 else:
     st.sidebar.info("Tabella infortuni vuota.")
+
+with st.sidebar.expander("🛠️ DEBUG QUOTE (Spia DB)"):
+    st.write(f"Totale quote caricate: {len(df_quote)}")
+    if not df_quote.empty:
+        st.dataframe(df_quote.head(10))
+        
 # 5. Ordinamento e Filtri
 ordine = st.sidebar.selectbox(
     "Ordina i giocatori per:",
